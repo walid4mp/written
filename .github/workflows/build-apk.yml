@@ -1,0 +1,126 @@
+name: Build SARAD APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+concurrency:
+  group: sarad-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Android release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+
+    env:
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_NO_GIT_STATUS: '1'
+      CI: '1'
+      # Runner ships a preinstalled Android SDK — never re-download it.
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      # Public client keys only — RLS enforces authorization.
+      EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+      EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Use the runner's preinstalled SDK instead of android-actions/setup-android
+      # (that action re-downloads the SDK and fails intermittently on rate limits).
+      - name: Verify Android SDK
+        run: |
+          set -e
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          if [ ! -d "$ANDROID_HOME/platform-tools" ]; then
+            echo "::error::Android SDK missing at $ANDROID_HOME"
+            ls /usr/local/lib/android 2>/dev/null || true
+            exit 1
+          fi
+          ls "$ANDROID_HOME" | head -20
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          echo "sdk.dir=$ANDROID_HOME" > /tmp/sdkdir.txt
+
+      - name: Install dependencies
+        working-directory: apps/mobile
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund --legacy-peer-deps
+          else
+            npm install --no-audit --no-fund --legacy-peer-deps
+          fi
+
+      - name: Verify Expo dependency alignment
+        working-directory: apps/mobile
+        run: npx expo install --check || echo "::warning::expo install --check reported drift (build continues)"
+
+      - name: Bundle JS (fails fast on Babel/Metro errors)
+        working-directory: apps/mobile
+        run: npx expo export --platform android --output-dir dist-export
+
+      - name: Prebuild native project
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Point Gradle at preinstalled SDK
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > apps/mobile/android/local.properties
+          cat apps/mobile/android/local.properties
+
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('apps/mobile/android/**/*.gradle*', 'apps/mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Build release APK
+        working-directory: apps/mobile/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon -x lint -x test
+
+      - name: Collect APK
+        run: |
+          mkdir -p artifact
+          find apps/mobile/android/app/build/outputs/apk -name '*.apk' -exec cp {} artifact/sarad-${{ github.run_number }}.apk \;
+          ls -lh artifact
+          test -n "$(ls -A artifact)" || { echo "::error::No APK produced"; exit 1; }
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: sarad-apk-${{ github.run_number }}
+          path: artifact/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload JS bundle on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sarad-js-bundle-debug
+          path: apps/mobile/dist-export
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# expo / react-native build output
+dist-export/
+.expo/
+apps/mobile/android/
+apps/mobile/ios/
+*.apk
+*.aab
+*.hbc
+
+# admin build
+apps/admin/dist/
+
+# env & secrets
+.env
+.env.local
+*.pem
+*.keystore
+
+# misc
+.DS_Store
+*.log
+artifact/

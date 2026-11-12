@@ -1,0 +1,21 @@
+{
+  "name": "sarad",
+  "private": true,
+  "version": "1.0.0",
+  "description": "SARAD — literary social platform (Expo + Supabase + admin dashboard)",
+  "workspaces": [
+    "apps/admin",
+    "packages/shared"
+  ],
+  "scripts": {
+    "admin:dev": "npm --workspace apps/admin run dev",
+    "admin:build": "npm --workspace apps/admin run build",
+    "mobile:start": "cd apps/mobile && npx expo start",
+    "mobile:types": "cd apps/mobile && npx tsc --noEmit",
+    "db:push": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f supabase/migrations/0001_init.sql",
+    "db:test": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f tests/01_rls.sql"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
